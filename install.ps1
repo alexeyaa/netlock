@@ -1,7 +1,7 @@
 # --- NetLock: install.ps1 ---
 $ErrorActionPreference = "Stop"
 
-# Проверка прав администратора
+# Админ-права
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
   ).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
   Write-Error "Запусти PowerShell от имени администратора."
@@ -15,6 +15,7 @@ $LockScript     = Join-Path $Base "lock.ps1"
 $UnlockScript   = Join-Path $Base "unlock.ps1"
 $ApplyScript    = Join-Path $Base "apply-mode.ps1"
 $PrelockWfw     = Join-Path $Base "prelock.wfw"
+$ModeFile       = Join-Path $Base "mode.txt"
 
 $TaskLockXml        = Join-Path $Base "task_lock.xml"
 $TaskUnlockXml      = Join-Path $Base "task_unlock.xml"
@@ -22,12 +23,20 @@ $TaskRemoteConnXml  = Join-Path $Base "task_remote_connect.xml"
 $TaskRemoteDiscXml  = Join-Path $Base "task_remote_disconnect.xml"
 $TaskStartupXml     = Join-Path $Base "task_startup.xml"
 
-# -------- lock.ps1 (режим «разрешено только RDP + Mullvad») --------
+# -------- lock.ps1 (разрешено только RDP + Mullvad), идемпотентный --------
 @'
 $ErrorActionPreference = "Stop"
-$Base = "C:\ProgramData\NetLock"
-$Pre = Join-Path $Base "prelock.wfw"
+$Base     = "C:\ProgramData\NetLock"
+$Pre      = Join-Path $Base "prelock.wfw"
+$ModeFile = Join-Path $Base "mode.txt"
 
+# Если уже "locked" — выходим
+if (Test-Path $ModeFile) {
+  $cur = (Get-Content $ModeFile -ErrorAction SilentlyContinue) -join ''
+  if ($cur -eq 'locked') { exit 0 }
+}
+
+# Сохраним текущую конфигурацию фаервола (один раз)
 if (-not (Test-Path $Pre)) {
   netsh advfirewall export "$Pre" | Out-Null
 }
@@ -63,6 +72,7 @@ foreach ($app in $Candidates) {
   netsh advfirewall firewall add rule name="NetLock Allow Mullvad Outbound" dir=out action=allow program="$app" enable=yes profile=any | Out-Null
 }
 
+# Частые порты туннелей
 netsh advfirewall firewall add rule name="NetLock Allow WireGuard Outbound" dir=out action=allow protocol=UDP remoteport=51820 profile=any | Out-Null
 netsh advfirewall firewall add rule name="NetLock Allow OpenVPN Outbound" dir=out action=allow protocol=UDP remoteport=1194 profile=any | Out-Null
 netsh advfirewall firewall add rule name="NetLock Allow OpenVPN Outbound (TCP)" dir=out action=allow protocol=TCP remoteport=1194,443 profile=any | Out-Null
@@ -71,28 +81,48 @@ netsh advfirewall firewall add rule name="NetLock Allow OpenVPN Outbound (TCP)" 
 netsh advfirewall set domainprofile  firewallpolicy blockinbound,blockoutbound | Out-Null
 netsh advfirewall set privateprofile firewallpolicy blockinbound,blockoutbound | Out-Null
 netsh advfirewall set publicprofile  firewallpolicy blockinbound,blockoutbound | Out-Null
+
+# Отметим состояние
+Set-Content -Path $ModeFile -Value 'locked' -Encoding ASCII
 '@ | Set-Content -Path $LockScript -Encoding UTF8
 
-# -------- unlock.ps1 (восстановление) --------
+# -------- unlock.ps1 (восстановление), идемпотентный --------
 @"
 `$ErrorActionPreference = "Stop"
-`$Pre = "$PrelockWfw"
+`$Base     = "C:\ProgramData\NetLock"
+`$Pre      = Join-Path `$Base "prelock.wfw"
+`$ModeFile = Join-Path `$Base "mode.txt"
+
+# Если уже "unlocked" — выходим
+if (Test-Path `$ModeFile) {
+  `$cur = (Get-Content `$ModeFile -ErrorAction SilentlyContinue) -join ''
+  if (`$cur -eq 'unlocked') { exit 0 }
+}
+
 if (Test-Path `$Pre) {
   netsh advfirewall import "`$Pre" | Out-Null
-  Remove-Item -Path `$Pre -Force
+  Remove-Item -Path "`$Pre" -Force -ErrorAction SilentlyContinue
 } else {
   netsh advfirewall set domainprofile  firewallpolicy blockinbound,allowoutbound | Out-Null
   netsh advfirewall set privateprofile firewallpolicy blockinbound,allowoutbound | Out-Null
   netsh advfirewall set publicprofile  firewallpolicy blockinbound,allowoutbound | Out-Null
 }
+
+Set-Content -Path "`$ModeFile" -Value 'unlocked' -Encoding ASCII
 "@ | Set-Content -Path $UnlockScript -Encoding UTF8
 
-# -------- apply-mode.ps1 (включать интернет при RDP Active или при unlock) --------
+# -------- apply-mode.ps1 (мьютекс + дебаунс + лог) --------
 @'
 $ErrorActionPreference = "Stop"
 
+$Base    = "C:\ProgramData\NetLock"
+$Lock    = Join-Path $Base "lock.ps1"
+$Unlock  = Join-Path $Base "unlock.ps1"
+$LogPath = Join-Path $Base "netlock.log"
+
+function Log([string]$m) { "$(Get-Date -Format o) $m" | Add-Content -Path $LogPath -ErrorAction SilentlyContinue }
+
 function Test-WorkstationLocked {
-  # true = заблокировано; false = разблокировано
   try {
     $sig = @"
 using System;
@@ -104,48 +134,51 @@ public class L {
 }
 "@
     Add-Type -TypeDefinition $sig -ErrorAction SilentlyContinue | Out-Null
-    $h = [L]::OpenDesktop("Default",0,$false,0x100) # DESKTOP_SWITCHDESKTOP
+    $h = [L]::OpenDesktop("Default",0,$false,0x100)
     if ($h -ne [IntPtr]::Zero) { return -not [L]::SwitchDesktop($h) } else { return $false }
   } catch { return $false }
 }
 
 function Test-ActiveRdpSession {
-  # Активная RDP, если в qwinsta/quser есть rdp-tcp со статусом Active
   $rdpActive = $false
   try {
     $out = (qwinsta.exe) 2>$null
-    if ($out) {
-      $rdpActive = ($out | Select-String -SimpleMatch "rdp-tcp") -and ($out | Select-String -SimpleMatch "Active")
-    }
+    if ($out) { $rdpActive = ($out | Select-String -SimpleMatch "rdp-tcp") -and ($out | Select-String -SimpleMatch "Active") }
   } catch { }
   if (-not $rdpActive) {
     try {
       $out = (quser.exe) 2>$null
-      if ($out) {
-        $rdpActive = ($out | Select-String -SimpleMatch "rdp-tcp") -and ($out | Select-String -SimpleMatch "Active")
-      }
+      if ($out) { $rdpActive = ($out | Select-String -SimpleMatch "rdp-tcp") -and ($out | Select-String -SimpleMatch "Active") }
     } catch { }
   }
   return [bool]$rdpActive
 }
 
-$locked = Test-WorkstationLocked
-$rdp    = Test-ActiveRdpSession
+# Глобальный мьютекс (межпроцессный, межсессионный)
+$mutex = New-Object System.Threading.Mutex($false, "Global\NetLockMutex")
+$got = $mutex.WaitOne(20000)  # 20 секунд таймаут, чтобы не зависнуть
+if (-not $got) { Log "mutex timeout"; exit 0 }
 
-# Правило:
-# - Если разблокировано -> включить интернет (unlock.ps1)
-# - Если заблокировано, но есть активная RDP-сессия -> включить интернет (unlock.ps1)
-# - Иначе -> выключить (lock.ps1)
-$Base = "C:\ProgramData\NetLock"
-$Lock    = Join-Path $Base "lock.ps1"
-$Unlock  = Join-Path $Base "unlock.ps1"
+try {
+  # Небольшой дебаунс, чтобы схлопнуть быстрые флуктуации
+  Start-Sleep -Milliseconds 800
 
-if (-not (Test-Path $Lock) -or -not (Test-Path $Unlock)) { exit 1 }
+  $locked = Test-WorkstationLocked
+  $rdp    = Test-ActiveRdpSession
 
-if (-not $locked -or $rdp) {
-  powershell -NoProfile -ExecutionPolicy Bypass -File $Unlock | Out-Null
-} else {
-  powershell -NoProfile -ExecutionPolicy Bypass -File $Lock   | Out-Null
+  # логику держим "последнее слово за текущим снимком"
+  $doUnlock = (-not $locked) -or $rdp
+  $action = if ($doUnlock) { "unlock" } else { "lock" }
+  Log "state: locked=$locked rdp=$rdp -> $action"
+
+  if ($doUnlock) {
+    powershell -NoProfile -ExecutionPolicy Bypass -File $Unlock | Out-Null
+  } else {
+    powershell -NoProfile -ExecutionPolicy Bypass -File $Lock   | Out-Null
+  }
+}
+finally {
+  $mutex.ReleaseMutex() | Out-Null
 }
 '@ | Set-Content -Path $ApplyScript -Encoding UTF8
 
@@ -170,7 +203,8 @@ param([string]$stateChange,[string]$desc)
     </Principal>
   </Principals>
   <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>
+    <ExecutionTimeLimit>PT2M</ExecutionTimeLimit>
     <AllowStartOnDemand>true</AllowStartOnDemand>
     <Enabled>true</Enabled>
   </Settings>
@@ -185,16 +219,13 @@ param([string]$stateChange,[string]$desc)
 "@
 }
 
-# XML для Login-триггера (вместо Boot)
+# XML для логон-триггера (упростим старт)
 @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Author>$author</Author><Description>NetLock: apply at logon</Description></RegistrationInfo>
   <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <Delay>PT10S</Delay>
-    </LogonTrigger>
+    <LogonTrigger><Enabled>true</Enabled><Delay>PT10S</Delay></LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
@@ -204,7 +235,8 @@ param([string]$stateChange,[string]$desc)
     </Principal>
   </Principals>
   <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>
+    <ExecutionTimeLimit>PT2M</ExecutionTimeLimit>
     <AllowStartOnDemand>true</AllowStartOnDemand>
     <Enabled>true</Enabled>
   </Settings>
@@ -218,7 +250,7 @@ param([string]$stateChange,[string]$desc)
 </Task>
 "@ | Set-Content -Path $TaskStartupXml -Encoding Unicode
 
-# Чистим возможные старые задачи (тихо, если их нет)
+# Чистим возможные старые задачи (тихо)
 function Remove-TaskIfExists {
   param([string]$Name)
   cmd /c "schtasks /Query /TN ""$Name"" >NUL 2>&1"
@@ -226,7 +258,6 @@ function Remove-TaskIfExists {
     cmd /c "schtasks /Delete /TN ""$Name"" /F >NUL 2>&1"
   }
 }
-
 Remove-TaskIfExists "NetLock\OnLock_Apply"
 Remove-TaskIfExists "NetLock\OnUnlock_Apply"
 Remove-TaskIfExists "NetLock\OnRemoteConnect_Apply"
@@ -246,6 +277,6 @@ schtasks /Create /TN "NetLock\OnRemoteConnect_Apply"    /XML "$TaskRemoteConnXml
 schtasks /Create /TN "NetLock\OnRemoteDisconnect_Apply" /XML "$TaskRemoteDiscXml"  /F | Out-Null
 schtasks /Create /TN "NetLock\AtStartup_Apply"          /XML "$TaskStartupXml"     /F | Out-Null
 
-Write-Host "NetLock установлено. Контроллер: $ApplyScript"
+Write-Host "NetLock установлен. Контроллер: $ApplyScript"
 Write-Host "Задачи: OnLock/OnUnlock/RemoteConnect/RemoteDisconnect/AtStartup"
 Write-Host "Готово. Заблокируй экран (Win+L) для проверки."

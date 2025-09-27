@@ -38,6 +38,7 @@ NetLock — это лёгкий управляемый слой над брандмауэром Windows, который:
   unlock     - восстановить предыдущее состояние фаервола (или разрешить outbound по умолчанию)
   apply      - контроллер: автоматически вызывает lock/unlock на основе состояния рабочего стола и RDP
   update     - удалить ВСЕ старые правила NetLock* и применить текущие из JSON
+  validate   - «сухой прогон»: проверить синтаксис JSON и показать, какие правила БЫЛИ БЫ созданы (без изменений в системе)
   help       - показать справку
 
 Примеры запуска (из административного PowerShell):
@@ -46,6 +47,7 @@ NetLock — это лёгкий управляемый слой над брандмауэром Windows, который:
   powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 unlock
   powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 apply
   powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 update
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 validate
 
 Файлы и структура:
   C:\ProgramData\NetLock\netlock.ps1              - основной скрипт
@@ -87,6 +89,22 @@ Uninstall:
 Логирование:
   Автоматическая ротация при ~200KB: текущий файл переименовывается в netlock.log.1, далее каскадом до .5.
   Метки уровней: [INFO], [STATE], [APPLY], [CLEAN], [WARN].
+
+Повышение прав / Авто-эскалация:
+  Для действий install, uninstall, lock, unlock, apply, update скрипт автоматически проверяет, запущен ли он с правами администратора.
+  Если нет — он перезапускает сам себя с -Verb RunAs, сохраняя исходные аргументы (включая -Force / -Purge) и пишет запись в лог.
+  Действия help и validate не требуют прав администратора и выполняются «как есть».
+  Это позволяет безопасно запускать .\netlock.ps1 lock даже из неадминской консоли — произойдёт корректное Elevation-повторное выполнение.
+
+Validate («сухой прогон»):
+  Выполняет полную валидацию JSON (поля, допустимые значения direction/action/protocol/profile/ports) и расширение programSearch (с использованием кэша), но НЕ:
+    * меняет состояние профилей фаервола;
+    * создаёт / удаляет правила;
+    * экспортирует / импортирует prelock.wfw.
+  На выходе в консоль и лог попадают счётчики: всего правил, отключено, расширено (programSearch -> N путей), потенциально будет создано.
+  Использование:
+    .\netlock.ps1 validate
+  Рекомендуется перед массовым обновлением / commit правок в netlock-rules.json.
 
 Мьютекс:
   Используется Global\NetLockMutex для избежания гонок при apply.

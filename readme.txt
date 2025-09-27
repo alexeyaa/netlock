@@ -1,63 +1,68 @@
-== РЈСЃС‚Р°РЅРѕРІРєР°
+NetLock Unified Script Usage (RU)
+=================================
 
-РћС‚РєСЂРѕР№ PowerShell РѕС‚ РёРјРµРЅРё Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°.
+Используется один файл: netlock.ps1
 
-РЎРєРѕРїРёСЂСѓР№ С‚РµРєСЃС‚ РІС‹С€Рµ РІ C:\ProgramData\NetLock\install.ps1.
+Действия:
+  install    - установить/обновить задачи планировщика и создать конфиг
+  uninstall  - удалить задачи (опция -Purge удалит каталог data полностью)
+  lock       - применить ограниченный режим (перекрывает outbound, разрешает только правила из JSON)
+  unlock     - восстановить предыдущее состояние фаервола (или разрешить outbound по умолчанию)
+  apply      - контроллер: автоматически вызывает lock/unlock на основе состояния рабочего стола и RDP
+  update     - удалить ВСЕ старые правила NetLock* и применить текущие из JSON
+  help       - показать справку
 
-Р’С‹РїРѕР»РЅРё:
+Примеры запуска (из административного PowerShell):
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 install
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 lock
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 unlock
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 apply
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\netlock.ps1 update
 
-Set-ExecutionPolicy Bypass -Scope Process -Force
-powershell -File C:\ProgramData\NetLock\install.ps1
+Файлы и структура:
+  C:\ProgramData\NetLock\netlock.ps1              - основной скрипт
+  C:\ProgramData\NetLock\data\netlock-rules.json  - конфигурация правил
+  C:\ProgramData\NetLock\data\prelock.wfw         - сохранённый экспорт правил (для возврата при unlock)
+  C:\ProgramData\NetLock\data\mode.txt             - текущее состояние (locked/unlocked)
+  C:\ProgramData\NetLock\data\netlock.log          - лог (ротация: ~200KB, до 5 файлов netlock.log.N)
 
-
-РџСЂРѕРІРµСЂРєР°:
-
-РќР°Р¶РјРё Win+L (СЃРµР°РЅСЃ Р·Р°Р±Р»РѕРєРёСЂСѓРµС‚СЃСЏ).
-
-РЎ РґСЂСѓРіРѕР№ РјР°С€РёРЅС‹ РїРѕРґРєР»СЋС‡РёСЃСЊ RDP РЅР° СЌС‚РѕС‚ С…РѕСЃС‚ вЂ” РїРѕРґРєР»СЋС‡РµРЅРёРµ РґРѕР»Р¶РЅРѕ РїСЂРѕС…РѕРґРёС‚СЊ.
-
-РќР° Р·Р°Р±Р»РѕРєРёСЂРѕРІР°РЅРЅРѕР№ РјР°С€РёРЅРµ РёРЅС‚РµСЂРЅРµС‚ РґР»СЏ РїСЂРёР»РѕР¶РµРЅРёР№ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ В«РіР»СѓС…РѕР№В», РєСЂРѕРјРµ Mullvad (РµСЃР»Рё РѕРЅ Р°РєС‚РёРІРµРЅ).
-
-Р Р°Р·Р±Р»РѕРєРёСЂСѓР№ СЃРµР°РЅСЃ вЂ” РёРЅС‚РµСЂРЅРµС‚ РІРµСЂРЅС‘С‚СЃСЏ.
-
-Р•СЃР»Рё С‚С‹ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ РІРЅСѓС‚СЂРё RDP-СЃРµСЃСЃРёРё, РёРЅС‚РµСЂРЅРµС‚ Р±СѓРґРµС‚ РІРєР»СЋС‡С‘РЅ (РґР°Р¶Рµ РїСЂРё Р·Р°Р±Р»РѕРєРёСЂРѕРІР°РЅРЅРѕРј Р»РѕРєР°Р»СЊРЅРѕРј СЌРєСЂР°РЅРµ).
-
-РќРµСЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ РїРѕСЂС‚ RDP? РџРѕСЃР»Рµ СѓСЃС‚Р°РЅРѕРІРєРё РѕС‚СЂРµРґР°РєС‚РёСЂСѓР№ C:\ProgramData\NetLock\lock.ps1 Рё РїРѕРјРµРЅСЏР№ localport=3389 РЅР° СЃРІРѕР№. Р—Р°С‚РµРј Р·Р°Р±Р»РѕРєРёСЂСѓР№/СЂР°Р·Р±Р»РѕРєРёСЂСѓР№ СЌРєСЂР°РЅ РёР»Рё Р·Р°РїСѓСЃС‚Рё C:\ProgramData\NetLock\apply-mode.ps1.
-
-РґР°Р»РµРЅРёРµ (С‡РёСЃС‚С‹Р№ РѕС‚РєР°С‚)
-
-Р’ PowerShell РѕС‚ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР° РІС‹РїРѕР»РЅРё:
-
-# 1) РЈРґР°Р»РёС‚СЊ Р·Р°РґР°С‡Рё
-function Remove-TaskIfExists {
-  param([string]$Name)
-  cmd /c "schtasks /Query /TN ""$Name"" >NUL 2>&1"
-  if ($LASTEXITCODE -eq 0) {
-    cmd /c "schtasks /Delete /TN ""$Name"" /F >NUL 2>&1"
-  }
+JSON схема (минимально):
+{
+  "version": 1,
+  "rules": [
+    { "type": "port", "name": "RDP Inbound", "enabled": true, "direction": "in", "action": "allow", "protocol": "TCP", "localPorts": "3389", "profile": "any" },
+    { "type": "program", "name": "Resilio Sync", "enabled": true, "direction": "out", "action": "allow", "program": "C:\\Users\\...\\Resilio Sync.exe", "profile": "any" },
+    { "type": "programSearch", "name": "VPN Processes", "enabled": true, "direction": "out", "action": "allow", "filenames": ["openvpn.exe"], "searchRootsEnv": ["ProgramFiles","ProgramFiles(x86)"], "profile": "any" }
+  ],
+  "policy": { "setBlockAll": true }
 }
-Remove-TaskIfExists "NetLock\OnLock_Apply"
-Remove-TaskIfExists "NetLock\OnUnlock_Apply"
-Remove-TaskIfExists "NetLock\OnRemoteConnect_Apply"
-Remove-TaskIfExists "NetLock\OnRemoteDisconnect_Apply"
-Remove-TaskIfExists "NetLock\AtStartup_Apply"
 
-# 2) РћС‚РєР°С‚РёС‚СЊ С„Р°РµСЂРІРѕР» Рє РґРµС„РѕР»С‚РЅРѕР№ РїРѕР»РёС‚РёРєРµ (In=Block, Out=Allow)
-netsh advfirewall set domainprofile  firewallpolicy blockinbound,allowoutbound
-netsh advfirewall set privateprofile firewallpolicy blockinbound,allowoutbound
-netsh advfirewall set publicprofile  firewallpolicy blockinbound,allowoutbound
+Поля:
+  type: program | programSearch | port
+  enabled: true/false (если false — правило не создаётся)
+  direction: in | out
+  action: allow | block (обычно allow)
+  profile: any | domain | private | public
+  program: путь к exe (для type=program)
+  filenames: массив имён exe для поиска (для type=programSearch)
+  searchRootsEnv: массив имён переменных окружения (ProgramFiles, ProgramFiles(x86), и т.п.)
+  localPorts / remotePorts / protocol: для портовых правил
 
-# 3) (РћРїС†РёРѕРЅР°Р»СЊРЅРѕ) СѓРґР°Р»РёС‚СЊ СЃРѕР·РґР°РЅРЅС‹Рµ РїСЂР°РІРёР»Р° РЅР°С€РµРіРѕ РЅР°Р±РѕСЂР°
-foreach ($rn in @(
-  "NetLock Allow RDP Inbound",
-  "NetLock Allow Mullvad Outbound",
-  "NetLock Allow WireGuard Outbound",
-  "NetLock Allow OpenVPN Outbound",
-  "NetLock Allow OpenVPN Outbound (TCP)")
-) { netsh advfirewall firewall delete rule name="$rn" }
+Отключение правила: поменять enabled на false и выполнить lock снова.
 
-# 4) РЈРґР°Р»РёС‚СЊ РїР°РїРєСѓ Рё С„Р°Р№Р»С‹
-Remove-Item -Path "C:\ProgramData\NetLock" -Recurse -Force -ErrorAction SilentlyContinue
+Uninstall:
+  .\netlock.ps1 uninstall -Purge   # также удалит каталог data
 
+Безопасность:
+  Перед первым lock сохраняется экспорт (prelock.wfw). При unlock импортируется назад и файл удаляется.
 
-Р“РѕС‚РѕРІРѕ. Р•СЃР»Рё РЅСѓР¶РЅС‹ РїСЂР°РІРєРё РїРѕРґ С‚РІРѕР№ РїРѕСЂС‚ RDP РёР»Рё РєРѕРЅРєСЂРµС‚РЅС‹Рµ РїСѓС‚Рё Mullvad вЂ” СЃРєР°Р¶Рё, СЃСЂР°Р·Сѓ РїРѕРґРіРѕРЅСЋ СЃРєСЂРёРїС‚.
+Логирование:
+  Автоматическая ротация при ~200KB: текущий файл переименовывается в netlock.log.1, далее каскадом до .5.
+  Метки уровней: [INFO], [STATE], [APPLY], [CLEAN], [WARN].
+
+Мьютекс:
+  Используется Global\NetLockMutex для избежания гонок при apply.
+
+Изменение правил:
+  1. Отредактировать netlock-rules.json.
+  2. Запустить: .\netlock.ps1 lock (или дождаться события блокировки экрана, если контроллер включён).

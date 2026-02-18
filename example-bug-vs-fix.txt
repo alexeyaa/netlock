@@ -1,0 +1,80 @@
+RouterOS Version Check Bug vs Fix Demonstration
+==============================================
+
+SCENARIO: Checking if version "7.22rc1" meets minimum requirement of "7.21"
+
+---
+BUGGY APPROACH (What Was Happening Before)
+---
+Input: "7.22rc1"
+Minimum required: "7.21"
+
+Parse version:
+  major = "7"
+  minor = "22rc1"  ← Problem: keeping suffix attached
+  
+String or naive comparison:
+  - Comparing "22rc1" with "21"
+  - String comparison may treat "22rc1" as less than "21" depending on implementation
+  - Or may fail to convert "22rc1" to a number
+  
+Result: ❌ INCORRECTLY FAILS
+  ERROR: This script requires RouterOS 7.21 or higher
+  Your version: 7.22rc1 (testing)
+  Script Error: RouterOS version too old
+
+---
+FIXED APPROACH (What Happens Now)
+---
+Input: "7.22rc1"
+Minimum required: "7.21"
+
+Parse version with proper extraction:
+  1. Split at dot: "7" and "22rc1"
+  2. major = "7"
+  3. Extract numeric portion from "22rc1":
+     - Iterate through characters
+     - "2" is digit → include
+     - "2" is digit → include  
+     - "r" is NOT digit → stop
+  4. minor = "22"  ← Correctly extracted numeric part
+  5. channel = "rc1"  ← Saved for informational purposes
+
+Convert to numbers:
+  majorNum = 7 (from "7")
+  minorNum = 22 (from "22")
+
+Numeric comparison:
+  Is majorNum (7) > minMajor (7)? No
+  Is majorNum (7) == minMajor (7)? Yes
+    Is minorNum (22) >= minMinor (21)? Yes (22 > 21)
+  
+Result: ✅ CORRECTLY PASSES
+  OK: RouterOS version 7.22rc1 meets minimum requirement (7.21)
+
+---
+KEY INSIGHT
+---
+The fix separates numeric version components from textual suffixes:
+  "7.22rc1" → major: 7, minor: 22, channel: "rc1"
+  
+This allows proper numeric comparison:
+  22 > 21  ✓  (not "22rc1" vs "21" ✗)
+
+---
+OTHER TEST CASES
+---
+All these now work correctly:
+
+Version      | Parsed      | >= 7.21? | Why
+-------------|-------------|----------|------------------------
+7.22rc1      | 7.22        | ✅ YES   | 22 > 21
+7.21         | 7.21        | ✅ YES   | 21 == 21  
+7.21rc1      | 7.21        | ✅ YES   | 21 == 21
+7.22         | 7.22        | ✅ YES   | 22 > 21
+7.22beta1    | 7.22        | ✅ YES   | 22 > 21
+7.22-rc1     | 7.22        | ✅ YES   | 22 > 21
+8.0          | 8.0         | ✅ YES   | 8 > 7 (major version)
+7.20         | 7.20        | ❌ NO    | 20 < 21
+7.20rc1      | 7.20        | ❌ NO    | 20 < 21
+6.49         | 6.49        | ❌ NO    | 6 < 7 (major version)

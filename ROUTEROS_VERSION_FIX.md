@@ -15,7 +15,7 @@ Script Error: RouterOS version too old (:error; line 96)
 
 ## Root Cause
 
-The version comparison logic was treating the minor version as a string (`"22rc1"``) instead of properly parsing the numeric portion (`22`) separately from the pre-release suffix (`rc1`).
+The version comparison logic was treating the minor version as a string (`"22rc1"`) instead of properly parsing the numeric portion (`22`) separately from the pre-release suffix (`rc1`).
 
 When comparing strings:
 - `"22rc1" < "21"` would evaluate incorrectly depending on string comparison rules
